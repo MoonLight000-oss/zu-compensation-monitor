@@ -1,0 +1,23 @@
+name: Schedule diagnostic
+
+on:
+  push:
+    paths:
+      - ".github/workflows/schedule-check.yml"
+  schedule:
+    - cron: "7-59/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show trigger and current time
+        run: |
+          echo "Workflow started successfully."
+          echo "Event: ${{ github.event_name }}"
+          echo "UTC time:"
+          date -u

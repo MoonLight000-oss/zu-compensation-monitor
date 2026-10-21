@@ -116,15 +116,46 @@ def load_state() -> dict[str, Any]:
 
 
 def save_state(items: list[dict[str, str]]) -> None:
+    normalized_items = [
+        {
+            "key": item["key"],
+            "title": item["title"],
+            "url": item["url"],
+            "kind": item["kind"],
+        }
+        for item in sorted(
+            items,
+            key=lambda x: (x["title"].casefold(), x["url"]),
+        )
+    ]
+
+    try:
+        existing = json.loads(
+            STATE_PATH.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        existing = {}
+
+    if (
+        existing.get("initialized") is True
+        and existing.get("current_items") == normalized_items
+    ):
+        print("Список публикаций не изменился. Файл состояния не обновляю.")
+        return
+
     data = {
         "initialized": True,
-        "current_items": [
-            {"key": item["key"], "title": item["title"], "url": item["url"], "kind": item["kind"]}
-            for item in sorted(items, key=lambda x: (x["title"].casefold(), x["url"]))
-        ],
-        "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "current_items": normalized_items,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        ),
     }
-    STATE_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    STATE_PATH.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print("Список публикаций изменился. Состояние сохранено.")
 
 
 def send_telegram(message: str) -> bool:

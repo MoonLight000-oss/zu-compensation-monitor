@@ -3,7 +3,7 @@ name: Monitor Kubcenter compensation announcements
 on:
   # GitHub Actions scheduled workflows have a 5-minute minimum interval.
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "4-59/5 * * * *"
   workflow_dispatch:
     inputs:
       test_notification:

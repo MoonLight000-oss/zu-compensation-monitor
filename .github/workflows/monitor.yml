@@ -1,0 +1,67 @@
+name: Monitor Kubcenter compensation announcements
+
+on:
+  # GitHub Actions scheduled workflows have a 5-minute minimum interval.
+  # One respectful check per run is sufficient for notices that remain published.
+  schedule:
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_notification:
+        description: "Send a Telegram test to both recipients"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zu-compensation-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Download repository files
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install libraries
+        run: python -m pip install -r requirements.txt
+
+      - name: Test Telegram or check official announcements
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID_MOM: ${{ secrets.TELEGRAM_CHAT_ID_MOM }}
+          TELEGRAM_CHAT_ID_DAD: ${{ secrets.TELEGRAM_CHAT_ID_DAD }}
+          SEND_TEST_MESSAGE: ${{ github.event.inputs.test_notification }}
+        run: |
+          if [ "$SEND_TEST_MESSAGE" = "true" ]; then
+            python monitor_cloud.py --test
+          else
+            python monitor_cloud.py
+          fi
+
+      - name: Persist state and daily activity heartbeat
+        if: always()
+        run: |
+          date -u +%Y-%m-%d > .monitor_heartbeat
+          if git diff --quiet -- monitor_state.json .monitor_heartbeat; then
+            echo "Состояние не изменилось; commit не требуется."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add monitor_state.json .monitor_heartbeat
+            git commit -m "Update compensation monitor state" || exit 0
+            git push
+          fi

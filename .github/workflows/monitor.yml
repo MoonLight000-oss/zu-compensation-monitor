@@ -52,16 +52,26 @@ jobs:
             python monitor_cloud.py
           fi
 
-      - name: Persist state and daily activity heartbeat
+      - name: Persist monitor state
         if: always()
         run: |
-          date -u +%Y-%m-%d > .monitor_heartbeat
-          if git diff --quiet -- monitor_state.json .monitor_heartbeat; then
+          if git diff --quiet -- monitor_state.json; then
             echo "Состояние не изменилось; commit не требуется."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add monitor_state.json .monitor_heartbeat
-            git commit -m "Update compensation monitor state" || exit 0
-            git push
+            exit 0
           fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add monitor_state.json
+          git commit -m "Update compensation monitor state"
+
+          git fetch origin main
+
+          if ! git rebase origin/main; then
+            git rebase --abort
+            echo "::error::Ветка main изменилась одновременно. Повтори запуск."
+            exit 1
+          fi
+
+          git push origin HEAD:main

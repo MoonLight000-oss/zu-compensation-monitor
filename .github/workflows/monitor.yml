@@ -45,10 +45,11 @@ jobs:
           TELEGRAM_CHAT_ID_DAD: ${{ secrets.TELEGRAM_CHAT_ID_DAD }}
           SEND_TEST_MESSAGE: ${{ github.event.inputs.test_notification }}
         run: |
+          echo "=== ЗАПУСК МОНИТОРА ==="
           if [ "$SEND_TEST_MESSAGE" = "true" ]; then
-            python monitor_cloud.py --test
+            python -u monitor_cloud.py --test
           else
-            python monitor_cloud.py
+            python -u monitor_cloud.py
           fi
 
       - name: Persist state only after a successful check

@@ -2,7 +2,6 @@ name: Monitor Kubcenter compensation announcements
 
 on:
   # GitHub Actions scheduled workflows have a 5-minute minimum interval.
-  # One respectful check per run is sufficient for notices that remain published.
   schedule:
     - cron: "2-59/5 * * * *"
   workflow_dispatch:
@@ -23,7 +22,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
       - name: Download repository files
         uses: actions/checkout@v7
@@ -52,8 +51,8 @@ jobs:
             python monitor_cloud.py
           fi
 
-      - name: Persist monitor state
-        if: always()
+      - name: Persist state only after a successful check
+        if: success()
         run: |
           if git diff --quiet -- monitor_state.json; then
             echo "Состояние не изменилось; commit не требуется."
@@ -62,16 +61,14 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add monitor_state.json
           git commit -m "Update compensation monitor state"
 
           git fetch origin main
-
           if ! git rebase origin/main; then
             git rebase --abort
-            echo "::error::Ветка main изменилась одновременно. Повтори запуск."
+            echo "::error::Не удалось согласовать состояние с веткой main. Повтори запуск."
             exit 1
           fi
-
           git push origin HEAD:main
+

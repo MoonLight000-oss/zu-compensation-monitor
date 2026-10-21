@@ -31,12 +31,7 @@ CHAT_IDS = [value for value in CHAT_IDS if value]
 
 SECTION_NAME = "Компенсационные выплаты — официальный сайт Кубцентра"
 
-SECTION_URL = (
-    "https://xn--90ainopldz.xn--p1ai/"
-    "%D0%BA%D0%BE%D0%BC%D0%BF%D0%B5%D0%BD%D1%81%D0%B0%D1%86"
-    "%D0%B8%D0%BE%D0%BD%D0%BD%D1%8B%D0%B5-%D0%B2%D1%8B%D0%"
-    B%D0%BF%D0%BB%D0%B0%D1%82%D1%8B/"
-)
+SECTION_URL = "https://xn--90ainopldz.xn--p1ai/компенсационные-выплаты/"
 
 APPLICATION_URL = "https://gpn.krasnodar.ru/"
 

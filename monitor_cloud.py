@@ -3,6 +3,7 @@
 This checks the official "Компенсационные выплаты" index once per GitHub Actions
 scheduled run. It tracks relevant announcement links/headings, rather than only
 looking for a heading beginning with the literal phrase "Прием заявлений".
+It retries temporary connection failures before marking a check as failed.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,10 @@ SECTION_NAME = "Компенсационные выплаты — официал
 SECTION_URL = "https://xn--90ainopldz.xn--p1ai/%D0%BA%D0%BE%D0%BC%D0%BF%D0%B5%D0%BD%D1%81%D0%B0%D1%86%D0%B8%D0%BE%D0%BD%D0%BD%D1%8B%D0%B5-%D0%B2%D1%8B%D0%BF%D0%BB%D0%B0%D1%82%D1%8B/"
 APPLICATION_URL = "https://gpn.krasnodar.ru/"
 STATE_PATH = Path("monitor_state.json")
-REQUEST_TIMEOUT = (10, 25)
+REQUEST_TIMEOUT = (15, 20)
+FETCH_ATTEMPTS = 4
+RETRY_DELAYS = (5, 10, 15)
+RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 USER_AGENT = (
     "Mozilla/5.0 (compatible; ZU-Compensation-Notice-Monitor/2.0; "
     "+https://github.com/; respectful monitoring)"
@@ -116,6 +121,7 @@ def load_state() -> dict[str, Any]:
 
 
 def save_state(items: list[dict[str, str]]) -> None:
+    """Persist state only when the tracked publication list really changed."""
     normalized_items = [
         {
             "key": item["key"],
@@ -123,34 +129,38 @@ def save_state(items: list[dict[str, str]]) -> None:
             "url": item["url"],
             "kind": item["kind"],
         }
-        for item in sorted(
-            items,
-            key=lambda x: (x["title"].casefold(), x["url"]),
-        )
+        for item in sorted(items, key=lambda x: (x["title"].casefold(), x["url"]))
     ]
 
     try:
-        existing = json.loads(
-            STATE_PATH.read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
+        existing = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        existing_items = existing.get("current_items", [])
+        normalized_existing = []
+        for item in existing_items:
+            if not isinstance(item, dict) or not item.get("title") or not item.get("url"):
+                continue
+            title = item["title"]
+            url = item["url"]
+            normalized_existing.append({
+                "key": item.get("key") or item_key(title, url),
+                "title": title,
+                "url": url,
+                "kind": item.get("kind", "publication"),
+            })
+        normalized_existing.sort(key=lambda x: (x["title"].casefold(), x["url"]))
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
         existing = {}
+        normalized_existing = []
 
-    if (
-        existing.get("initialized") is True
-        and existing.get("current_items") == normalized_items
-    ):
+    if existing.get("initialized") is True and normalized_existing == normalized_items:
         print("Список публикаций не изменился. Файл состояния не обновляю.")
         return
 
     data = {
         "initialized": True,
         "current_items": normalized_items,
-        "updated_at_utc": datetime.now(timezone.utc).isoformat(
-            timespec="seconds"
-        ),
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-
     STATE_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -191,17 +201,67 @@ def send_telegram(message: str) -> bool:
     return all_ok
 
 
+def get_official_page_response() -> requests.Response:
+    """Fetch the official page with bounded retries for intermittent network failures."""
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.5",
+    }
+    last_network_error: Exception | None = None
+
+    for attempt in range(1, FETCH_ATTEMPTS + 1):
+        try:
+            response = requests.get(
+                SECTION_URL,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code in RETRYABLE_HTTP_STATUSES and attempt < FETCH_ATTEMPTS:
+                delay = RETRY_DELAYS[attempt - 1]
+                print(
+                    f"[СЕТЬ] Сайт вернул HTTP {response.status_code}; "
+                    f"повтор {attempt + 1}/{FETCH_ATTEMPTS} через {delay} сек."
+                )
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            return response
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last_network_error = exc
+            if attempt >= FETCH_ATTEMPTS:
+                break
+            delay = RETRY_DELAYS[attempt - 1]
+            print(
+                f"[СЕТЬ] Попытка {attempt}/{FETCH_ATTEMPTS} не удалась "
+                f"({type(exc).__name__}). Повтор через {delay} сек."
+            )
+            time.sleep(delay)
+        except requests.HTTPError as exc:
+            # Retry transient server errors, but do not retry permanent HTTP errors.
+            status = exc.response.status_code if exc.response is not None else None
+            if status not in RETRYABLE_HTTP_STATUSES or attempt >= FETCH_ATTEMPTS:
+                raise
+            delay = RETRY_DELAYS[attempt - 1]
+            print(
+                f"[СЕТЬ] Ошибка HTTP {status}; "
+                f"повтор {attempt + 1}/{FETCH_ATTEMPTS} через {delay} сек."
+            )
+            time.sleep(delay)
+
+    if last_network_error is not None:
+        raise RuntimeError(
+            f"Не удалось подключиться к официальному сайту после {FETCH_ATTEMPTS} попыток. "
+            "Последняя ошибка: "
+            f"{type(last_network_error).__name__}: {last_network_error}"
+        ) from last_network_error
+    raise RuntimeError(
+        f"Не удалось получить официальную страницу после {FETCH_ATTEMPTS} попыток."
+    )
+
+
 def fetch_relevant_items() -> list[dict[str, str]]:
     """Fetch and parse the official Kubcenter compensation index."""
-    response = requests.get(
-        SECTION_URL,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.5",
-        },
-        timeout=REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
+    response = get_official_page_response()
     soup = BeautifulSoup(response.content, "html.parser")
 
     page_text = normalize(soup.get_text(" ", strip=True))

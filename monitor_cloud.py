@@ -35,4 +35,4 @@ SECTION_URL = "https://xn--90ainopldz.xn--p1ai/компенсационные-в
 
 APPLICATION_URL = "https://gpn.krasnodar.ru/"
 
-STATE_PATH = Path("monitor_state.json
+STATE_PATH = Path("monitor_state.json")
